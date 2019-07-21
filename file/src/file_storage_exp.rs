@@ -129,17 +129,43 @@ impl TryFrom<&File<VertexId>> for VertexId {
     }
 }
 
+impl TryFrom<&Edge> for File<HashEdge> {
+    type Error = bincode::Error;
 
-fn write_all_vertices_to_files<I, P>(base_path: P, i: I) -> impl Future<Item=HashVec<VertexId>, Error=Error>
-    where I: IntoIterator,
-          <I as IntoIterator>::Item: Borrow<VertexId>,
+    fn try_from(edge: &Edge) -> std::result::Result<File<HashEdge>, bincode::Error> {
+        let content_from: Vec<u8> = bincode::serialize(&(edge.0).0)?;
+        let hash_from: Hash = (&content_from).into();
+
+        let content_to: Vec<u8> = bincode::serialize(&(edge.1).0)?;
+        let hash_to: Hash = (&content_from).into();
+
+        let hash_edge = HashEdge { from: hash_from, to: hash_to };
+
+        let content: Vec<u8> = bincode::serialize(&hash_edge)?;
+        let hash: Hash = (&content).into();
+
+        Ok(File {
+            content,
+            hash,
+            _pot: std::marker::PhantomData,
+        })
+    }
+}
+
+
+fn write_all_to_files<I, P, T, OT>(base_path: P, i: I) -> impl Future<Item=HashVec<OT>, Error=Error>
+    where I: IntoIterator<Item=T>,
+          T: TryInto<File<OT>, Error=bincode::Error>,
+          OT: ObjectType,
           P: AsRef<Path>,
           P: Clone
 {
-    fn write_vertex_to_file<P>(base_path: P, vertex: VertexId) -> impl Future<Item=Hash, Error=Error>
-        where P: AsRef<Path>
+    fn write_one_to_file<P, T, OT>(base_path: P, t: T) -> impl Future<Item=Hash, Error=Error>
+        where T: TryInto<File<OT>, Error=bincode::Error>,
+              OT: ObjectType,
+              P: AsRef<Path>
     {
-        futures::done(TryInto::<File<VertexId>>::try_into(&vertex))
+        futures::done(TryInto::<File<OT>>::try_into(t))
             .map_err(Into::into)
             .and_then(move |file| {
                 let hash = file.hash;
@@ -154,11 +180,23 @@ fn write_all_vertices_to_files<I, P>(base_path: P, i: I) -> impl Future<Item=Has
     let futs = i.into_iter()
         .map(move |v| {
             let base_path = base_path.clone();
-            write_vertex_to_file(base_path, *v.borrow())
+            write_one_to_file(base_path, v)
         });
 
-    tokio_fs::create_dir_all(VertexId::get_path(base_path_clone))
+    tokio_fs::create_dir_all(OT::get_path(base_path_clone))
         .map_err(Into::into)
         .and_then(|_| futures::future::join_all(futs))
         .map(|vec| HashVec(vec, std::marker::PhantomData))
+}
+
+fn write_graph_vertices<P>(base_path: P, graph: &DirectedGraph) -> impl Future<Item=HashVec<VertexId>, Error=Error>
+    where P: AsRef<Path>,
+          P: Clone
+{
+    let vertices: Vec<VertexId> = graph
+        .vertices()
+        .map(| v | *v)
+        .collect();
+
+    write_all_to_files(base_path, vertices)
 }
