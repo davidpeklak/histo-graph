@@ -152,36 +152,46 @@ impl TryFrom<&Edge> for File<HashEdge> {
     }
 }
 
-
-fn write_all_to_files<I, P, T, OT>(base_path: P, i: I) -> impl Future<Item=HashVec<OT>, Error=Error>
+fn to_file_vec<I, T, OT>(i: I) -> Vec<Result<File<OT>>>
     where I: IntoIterator<Item=T>,
           T: TryInto<File<OT>, Error=bincode::Error>,
-          OT: ObjectType,
+          OT: ObjectType
+{
+    let files: Vec<Result<File<OT>>> = i
+        .into_iter()
+        .map(TryInto::<File<OT>>::try_into)
+        .map(|r| r.map_err(Into::into))
+        .collect();
+
+    files
+}
+
+fn write_all_files<P, OT>(base_path: P, files: Vec<Result<File<OT>>>) -> impl Future<Item=HashVec<OT>, Error=Error>
+    where OT: ObjectType,
           P: AsRef<Path>,
           P: Clone
 {
-    fn write_one_to_file<P, T, OT>(base_path: P, t: T) -> impl Future<Item=Hash, Error=Error>
-        where T: TryInto<File<OT>, Error=bincode::Error>,
-              OT: ObjectType,
+    fn write_one_file<P, OT>(base_path: P, file: File<OT>) -> impl Future<Item=Hash, Error=Error>
+        where OT: ObjectType,
               P: AsRef<Path>
     {
-        futures::done(TryInto::<File<OT>>::try_into(t))
+        let hash = file.hash;
+        file.write_file(&base_path)
             .map_err(Into::into)
-            .and_then(move |file| {
-                let hash = file.hash;
-                file.write_file(&base_path)
-                    .map_err(Into::into)
-                    .map(move |_| hash)
-            })
+            .map(move |_| hash)
     }
 
+    let base_path: PathBuf = base_path.as_ref().into();
     let base_path_clone = base_path.clone();
 
-    let futs = i.into_iter()
-        .map(move |v| {
+    let futs = files
+        .into_iter()
+        .map(futures::done)
+        .map(move |fut| fut.and_then({
             let base_path = base_path.clone();
-            write_one_to_file(base_path, v)
-        });
+            move |file| write_one_file(base_path, file)
+        }));
+
 
     tokio_fs::create_dir_all(OT::get_path(base_path_clone))
         .map_err(Into::into)
@@ -193,10 +203,17 @@ fn write_graph_vertices<P>(base_path: P, graph: &DirectedGraph) -> impl Future<I
     where P: AsRef<Path>,
           P: Clone
 {
-    let vertices: Vec<VertexId> = graph
-        .vertices()
-        .map(| v | *v)
-        .collect();
+    let files = to_file_vec(graph.vertices());
 
-    write_all_to_files(base_path, vertices)
+    write_all_files(base_path, files)
 }
+
+fn write_graph_edges<P>(base_path: P, graph: &DirectedGraph) -> impl Future<Item=HashVec<HashEdge>, Error=Error>
+    where P: AsRef<Path>,
+          P: Clone
+{
+    let files = to_file_vec(graph.edges());
+
+    write_all_files(base_path, files)
+}
+
