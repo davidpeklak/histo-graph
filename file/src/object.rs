@@ -1,25 +1,60 @@
+//! This module defines the object types that can be stored. It defines the trait [`ObjectType`],
+//! which is implemented by all types that represent storable objects.
+//!
+//! [`ObjectType`]: ./trait.ObjectType.html
+
 use std::path::{PathBuf, Path};
 use histo_graph_core::graph::graph::VertexId;
 use serde::{Serialize, Deserialize};
 
 use crate::Hash;
 
-/// A HashEdge respresents an edge by the hashes of the vertices it is connected to.
+/// Respresents an edge by the [`Hash`]es of the vertices it is connected to.
+/// This is the type that gets serialized and stored, when storing an edge.
+///
+/// [`Hash`]: ../struct.Hash.html
 #[derive(Serialize, Deserialize)]
 pub(crate) struct HashEdge {
     pub(crate) from: Hash,
     pub(crate) to: Hash,
 }
 
+/// A vector of [`Hash`]es. These are the `Hash`es of objects that are stored, like `VertexId`s
+/// or `HashEdge`s.
+///
+/// [`Hash`]: ../struct.Hash.html
 #[derive(Serialize)]
-pub(crate) struct HashVec<OT>(pub(crate) Vec<Hash>, pub(crate) std::marker::PhantomData<OT>);
+pub(crate) struct HashVec<OT>(pub(crate) Vec<Hash>, std::marker::PhantomData<OT>);
 
+impl<OT> HashVec<OT>
+where OT: ObjectType {
+
+    /// Constructs a `HashVec` where the [`Hash`]es are the ones of objects of type `OT`.
+    ///
+    /// [`Hash`]: ../struct.Hash.html
+    pub(crate) fn new(hashes: Vec<Hash>) -> HashVec<OT> {
+        HashVec(hashes, std::marker::PhantomData)
+    }
+}
+
+/// The top-object of a stored graph.
 #[derive(Serialize)]
 pub(crate) struct GraphHash {
+
+    /// The [`Hash`] of the [`HashVec`] of the vertices.
+    ///
+    /// [`Hash`]: ../struct.Hash.html
+    /// [`HashVec`]: ./struct.HashVec.html
     pub(crate) vertex_vec_hash: Hash,
+
+    /// The [`Hash`] of the [`HashVec`] of the edges.
+    ///
+    /// [`Hash`]: ../struct.Hash.html
+    /// [`HashVec`]: ./struct.HashVec.html
     pub(crate) edge_vec_hash: Hash,
 }
 
+/// Marks types as objects that can be stored.
 pub(crate) trait ObjectType {
     fn sub_dir() -> &'static str;
 
@@ -31,6 +66,10 @@ pub(crate) trait ObjectType {
     }
 }
 
+/// Marks types as objects that can be stored under a name (rather than storing them by their
+/// [`Hash`]).
+///
+/// [`Hash`]: ../struct.Hash.html
 pub(crate) trait NamedObjectType {}
 
 impl ObjectType for VertexId {

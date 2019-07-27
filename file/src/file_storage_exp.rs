@@ -21,7 +21,6 @@ use crate::{
 };
 
 
-
 fn to_file_vec<I, T, OT>(i: I) -> Vec<Result<File<OT>>>
     where I: IntoIterator<Item=T>,
           T: TryInto<File<OT>, Error=bincode::Error>,
@@ -66,7 +65,7 @@ fn write_all_files<P, OT>(base_path: P, files: Vec<Result<File<OT>>>) -> impl Fu
     tokio_fs::create_dir_all(OT::get_path(base_path_clone))
         .map_err(Into::into)
         .and_then(|_| futures::future::join_all(futs))
-        .map(|vec| HashVec(vec, std::marker::PhantomData))
+        .map(HashVec::new)
 }
 
 fn write_hash_vec<'a, P, OT>(base_path: P, hash_vec: &'a HashVec<OT>) -> impl Future<Item=Hash, Error=Error>
