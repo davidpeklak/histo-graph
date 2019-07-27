@@ -1,9 +1,7 @@
 use std::{
-    io,
     path::{Path, PathBuf},
     convert::TryFrom,
 };
-use futures::future::Future;
 
 use crate::{
     Hash,
@@ -19,7 +17,7 @@ use crate::{
 use histo_graph_core::graph::graph::{VertexId, Edge};
 
 pub(crate) struct File<OT> {
-    content: Vec<u8>,
+    pub(crate) content: Vec<u8>,
     pub(crate) hash: Hash,
     _pot: std::marker::PhantomData<OT>,
 }
@@ -27,20 +25,18 @@ pub(crate) struct File<OT> {
 impl<OT> File<OT>
     where OT: ObjectType
 {
-    fn create_path<P>(&self, base_path: P) -> PathBuf
+    pub(crate) fn create_dir<P>(base_path: P) -> PathBuf
         where P: AsRef<Path>
     {
         let path_buf: PathBuf = base_path.as_ref().into();
-        path_buf.join(OT::sub_dir()).join(self.hash.to_string())
+        path_buf.join(OT::storage_name())
     }
 
-
-    pub(crate) fn write_file<P>(self, base_path: &P) -> impl Future<Item=(), Error=io::Error>
+    pub(crate) fn create_path<P>(&self, base_path: P) -> PathBuf
         where P: AsRef<Path>
     {
-        let path: PathBuf = self.create_path(base_path);
-        tokio_fs::write(path, self.content)
-            .map(|_| ())
+        let path_buf: PathBuf = base_path.as_ref().into();
+        path_buf.join(OT::storage_name()).join(self.hash.to_string())
     }
 }
 
@@ -48,21 +44,12 @@ impl<NOT> File<NOT>
     where NOT: ObjectType,
           NOT: NamedObjectType
 {
-    fn create_named_path<P, S>(&self, base_path: P, name: S) -> PathBuf
+    pub(crate) fn create_named_path<P, S>(&self, base_path: P, name: S) -> PathBuf
         where P: AsRef<Path>,
               S: AsRef<str>
     {
         let path_buf: PathBuf = base_path.as_ref().into();
-        path_buf.join(NOT::sub_dir()).join(name.as_ref())
-    }
-
-    pub(crate) fn write_named_file<P, S>(self, base_path: &P, name: S) -> impl Future<Item=(), Error=io::Error>
-        where P: AsRef<Path>,
-              S: AsRef<str>
-    {
-        let path: PathBuf = self.create_named_path(base_path, name);
-        tokio_fs::write(path, self.content)
-            .map(|_| ())
+        path_buf.join(NOT::storage_name()).join(name.as_ref())
     }
 }
 

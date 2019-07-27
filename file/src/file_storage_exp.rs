@@ -6,13 +6,17 @@ use histo_graph_core::graph::{
 use crate::error::{Error, Result};
 
 use futures::future::Future;
-use std::path::{Path, PathBuf};
+use std::{
+    io,
+    path::{Path, PathBuf},
+};
 use std::convert::TryInto;
 
 use crate::{
     Hash,
     object::{
         ObjectType,
+        NamedObjectType,
         HashVec,
         HashEdge,
         GraphHash,
@@ -35,12 +39,32 @@ fn to_file_vec<I, T, OT>(i: I) -> Vec<Result<File<OT>>>
     files
 }
 
+fn write_file<P, OT>(base_path: &P, file: File<OT>) -> impl Future<Item=(), Error=io::Error>
+    where OT: ObjectType,
+          P: AsRef<Path>
+{
+    let path: PathBuf = file.create_path(base_path);
+    tokio_fs::write(path, file.content)
+        .map(|_| ())
+}
+
+fn write_named_file<P, S, NOT>(base_path: &P, name: S, file: File<NOT>) -> impl Future<Item=(), Error=io::Error>
+    where NOT: ObjectType,
+          NOT: NamedObjectType,
+          P: AsRef<Path>,
+          S: AsRef<str>
+{
+    let path: PathBuf = file.create_named_path(base_path, name);
+    tokio_fs::write(path, file.content)
+        .map(|_| ())
+}
+
 fn write_one_file<P, OT>(base_path: P, file: File<OT>) -> impl Future<Item=Hash, Error=Error>
     where OT: ObjectType,
           P: AsRef<Path>
 {
     let hash = file.hash;
-    file.write_file(&base_path)
+    write_file(&base_path, file)
         .map_err(Into::into)
         .map(move |_| hash)
 }
@@ -62,7 +86,7 @@ fn write_all_files<P, OT>(base_path: P, files: Vec<Result<File<OT>>>) -> impl Fu
         }));
 
 
-    tokio_fs::create_dir_all(OT::get_path(base_path_clone))
+    tokio_fs::create_dir_all(File::<OT>::create_dir(base_path_clone))
         .map_err(Into::into)
         .and_then(|_| futures::future::join_all(futs))
         .map(HashVec::new)
@@ -119,7 +143,7 @@ pub fn save_graph_as<P>(base_path: P, name: String, graph: &DirectedGraph) -> im
     write_graph(base_path.clone(), graph)
         .and_then(|graph_hash| TryInto::<File<GraphHash>>::try_into(&graph_hash)
             .map_err(Into::into))
-        .and_then(move |file| file.write_named_file(&base_path, name)
+        .and_then(move |file| write_named_file(&base_path, name, file)
             .map_err(Into::into)
         )
 }

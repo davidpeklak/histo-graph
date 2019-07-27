@@ -3,7 +3,6 @@
 //!
 //! [`ObjectType`]: ./trait.ObjectType.html
 
-use std::path::{PathBuf, Path};
 use histo_graph_core::graph::graph::VertexId;
 use serde::{Serialize, Deserialize};
 
@@ -56,14 +55,9 @@ pub(crate) struct GraphHash {
 
 /// Marks types as objects that can be stored.
 pub(crate) trait ObjectType {
-    fn sub_dir() -> &'static str;
 
-    fn get_path<P>(base_path: P) -> PathBuf
-        where P: AsRef<Path>
-    {
-        let path_buf: PathBuf = base_path.as_ref().into();
-        path_buf.join(Self::sub_dir())
-    }
+    /// The name that identifies the type of the object on the storage.
+    fn storage_name() -> &'static str;
 }
 
 /// Marks types as objects that can be stored under a name (rather than storing them by their
@@ -73,29 +67,29 @@ pub(crate) trait ObjectType {
 pub(crate) trait NamedObjectType {}
 
 impl ObjectType for VertexId {
-    fn sub_dir() -> &'static str {
+    fn storage_name() -> &'static str {
         "vertex"
     }
 }
 
 impl ObjectType for HashEdge {
-    fn sub_dir() -> &'static str {
+    fn storage_name() -> &'static str {
         "edge"
     }
 }
 
 impl ObjectType for HashVec<VertexId> {
-    fn sub_dir() -> &'static str {
+    fn storage_name() -> &'static str {
         "vertexvec"
     }
 }
 
 impl ObjectType for HashVec<HashEdge> {
-    fn sub_dir() -> &'static str { "edgevec" }
+    fn storage_name() -> &'static str { "edgevec" }
 }
 
 impl ObjectType for GraphHash {
-    fn sub_dir() -> &'static str { "graph" }
+    fn storage_name() -> &'static str { "graph" }
 }
 
 impl NamedObjectType for GraphHash {}
