@@ -1,3 +1,8 @@
+//! This module defines a struct [`File`] that holds all the data that is needed to store an object.
+//! It also provides functions to create a `File` from a reference to a type that can be stored,
+//! by implementations of `TryInto` for these types.
+//! [`File`]: ./struct.File.html
+
 use std::{
     path::{Path, PathBuf},
     convert::TryFrom,
@@ -16,15 +21,32 @@ use crate::{
 
 use histo_graph_core::graph::graph::{VertexId, Edge};
 
+/// Holds the data that is needed to store an object.
 pub(crate) struct File<OT> {
+
+    /// The content to be stored.
     pub(crate) content: Vec<u8>,
+
+    /// The [`Hash`] of the stored content.
+    ///
+    /// [`Hash`]: ../struct.Hash.html
     pub(crate) hash: Hash,
+
     _pot: std::marker::PhantomData<OT>,
 }
 
 impl<OT> File<OT>
     where OT: ObjectType
 {
+    pub(crate) fn new(content: Vec<u8>, hash: Hash) -> File<OT> {
+        File {
+            content,
+            hash,
+            _pot: std::marker::PhantomData
+        }
+    }
+
+    /// Returns the directory in which to store objects of type `OT`, given a `base_path`.
     pub(crate) fn create_dir<P>(base_path: P) -> PathBuf
         where P: AsRef<Path>
     {
@@ -32,11 +54,19 @@ impl<OT> File<OT>
         path_buf.join(OT::storage_name())
     }
 
+    /// Returns the path of the file to be stored, given a `base_path`.
     pub(crate) fn create_path<P>(&self, base_path: P) -> PathBuf
         where P: AsRef<Path>
     {
+        File::<OT>::create_path_from_hash(base_path, self.hash)
+    }
+
+    /// Returns the path of a file with the given `hash`, under the `base_path`.
+    pub(crate) fn create_path_from_hash<P>(base_path: P, hash: Hash) -> PathBuf
+        where P: AsRef<Path>
+    {
         let path_buf: PathBuf = base_path.as_ref().into();
-        path_buf.join(OT::storage_name()).join(self.hash.to_string())
+        path_buf.join(OT::storage_name()).join(hash.to_string())
     }
 }
 
@@ -44,6 +74,7 @@ impl<NOT> File<NOT>
     where NOT: ObjectType,
           NOT: NamedObjectType
 {
+    /// Returns the path of the file, which is stored under the provided name.
     pub(crate) fn create_named_path<P, S>(&self, base_path: P, name: S) -> PathBuf
         where P: AsRef<Path>,
               S: AsRef<str>
@@ -127,5 +158,21 @@ impl TryFrom<&GraphHash> for File<GraphHash> {
             hash,
             _pot: std::marker::PhantomData,
         })
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::convert::TryInto;
+    use histo_graph_core::graph::graph::VertexId;
+    use crate::file::File;
+
+    #[test]
+    fn test_vertex_id_to_file() -> Result<(), bincode::Error> {
+        let vertex_id = VertexId(27u64);
+        let file: File<VertexId> = (&vertex_id).try_into()?;
+        let result: VertexId = (&file).try_into()?;
+
+        Ok(assert_eq!(vertex_id, result))
     }
 }

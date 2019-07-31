@@ -147,3 +147,33 @@ pub fn save_graph_as<P>(base_path: P, name: String, graph: &DirectedGraph) -> im
             .map_err(Into::into)
         )
 }
+
+fn read_file<P, OT>(base_path: &P, hash: Hash) -> impl Future<Item=File<OT>, Error=io::Error>
+    where OT: ObjectType,
+          P: AsRef<Path>
+{
+    let path: PathBuf = File::<OT>::create_path_from_hash(base_path, hash);
+    tokio_fs::read(path)
+        .map(move |content| File::<OT>::new(content, hash))
+}
+
+fn file_to_vertex(file: File<VertexId>) -> Result<VertexId>
+{
+    (&file).try_into()
+        .map_err(Into::into)
+}
+
+fn read_object<P, OT>(base_path: &P, hash: Hash) -> impl Future<Item=OT, Error=Error>
+    where OT: ObjectType,
+          for<'a> &'a File<OT>: TryInto<OT, Error=bincode::Error> /* this is a "higher ranked trait bound" https://doc.rust-lang.org/nomicon/hrtb.html */,
+          P: AsRef<Path>
+{
+    read_file::<P, OT>(base_path, hash)
+        .map_err(Into::into)
+        .and_then(|file| {
+            let r = (&file).try_into();
+            futures::done(r)
+        })
+        .map_err(Into::into)
+}
+
