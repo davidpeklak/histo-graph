@@ -39,13 +39,14 @@ fn to_file_vec<I, T, OT>(i: I) -> Vec<Result<File<OT>>>
     files
 }
 
-fn write_file<P, OT>(base_path: &P, file: File<OT>) -> impl Future<Item=(), Error=io::Error>
+fn write_file<P, OT>(base_path: P, file: File<OT>) -> impl Future<Item=Hash, Error=io::Error>
     where OT: ObjectType,
           P: AsRef<Path>
 {
     let path: PathBuf = file.create_path(base_path);
+    let hash = file.hash;
     tokio_fs::write(path, file.content)
-        .map(|_| ())
+        .map(move |_| hash)
 }
 
 fn write_named_file<P, S, NOT>(base_path: &P, name: S, file: File<NOT>) -> impl Future<Item=(), Error=io::Error>
@@ -57,16 +58,6 @@ fn write_named_file<P, S, NOT>(base_path: &P, name: S, file: File<NOT>) -> impl 
     let path: PathBuf = file.create_named_path(base_path, name);
     tokio_fs::write(path, file.content)
         .map(|_| ())
-}
-
-fn write_one_file<P, OT>(base_path: P, file: File<OT>) -> impl Future<Item=Hash, Error=Error>
-    where OT: ObjectType,
-          P: AsRef<Path>
-{
-    let hash = file.hash;
-    write_file(&base_path, file)
-        .map_err(Into::into)
-        .map(move |_| hash)
 }
 
 fn write_all_files<P, OT>(base_path: P, files: Vec<Result<File<OT>>>) -> impl Future<Item=HashVec<OT>, Error=Error>
@@ -82,7 +73,8 @@ fn write_all_files<P, OT>(base_path: P, files: Vec<Result<File<OT>>>) -> impl Fu
         .map(futures::done)
         .map(move |fut| fut.and_then({
             let base_path = base_path.clone();
-            move |file| write_one_file(base_path, file)
+            move |file| write_file(base_path, file)
+                .map_err(Into::into)
         }));
 
 
@@ -102,7 +94,8 @@ fn write_hash_vec<'a, P, OT>(base_path: P, hash_vec: &'a HashVec<OT>) -> impl Fu
 {
     futures::done(TryInto::<File<HashVec<OT>>>::try_into(hash_vec))
         .map_err(Into::into)
-        .and_then(|file| write_one_file(base_path, file))
+        .and_then(|file| write_file(base_path, file)
+            .map_err(Into::into))
 }
 
 fn write_graph_vertices<P>(base_path: P, graph: &DirectedGraph) -> impl Future<Item=Hash, Error=Error>
@@ -157,12 +150,6 @@ fn read_file<P, OT>(base_path: &P, hash: Hash) -> impl Future<Item=File<OT>, Err
         .map(move |content| File::<OT>::new(content, hash))
 }
 
-fn file_to_vertex(file: File<VertexId>) -> Result<VertexId>
-{
-    (&file).try_into()
-        .map_err(Into::into)
-}
-
 fn read_object<P, OT>(base_path: &P, hash: Hash) -> impl Future<Item=OT, Error=Error>
     where OT: ObjectType,
           for<'a> &'a File<OT>: TryInto<OT, Error=bincode::Error> /* this is a "higher ranked trait bound" https://doc.rust-lang.org/nomicon/hrtb.html */,
@@ -170,10 +157,17 @@ fn read_object<P, OT>(base_path: &P, hash: Hash) -> impl Future<Item=OT, Error=E
 {
     read_file::<P, OT>(base_path, hash)
         .map_err(Into::into)
-        .and_then(|file| {
-            let r = (&file).try_into();
-            futures::done(r)
-        })
+        .and_then(|file| futures::done((&file).try_into()))
         .map_err(Into::into)
 }
 
+#[cfg(test)]
+mod test {
+    use histo_graph_core::graph::graph::VertexId;
+
+    #[test]
+    fn test_write_read_vertex() {
+        let vertex = VertexId(27);
+
+    }
+}
