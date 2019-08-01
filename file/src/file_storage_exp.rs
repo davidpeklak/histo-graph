@@ -84,15 +84,12 @@ fn write_all_files<P, OT>(base_path: P, files: Vec<Result<File<OT>>>) -> impl Fu
         .map(HashVec::new)
 }
 
-fn write_hash_vec<'a, P, OT>(base_path: P, hash_vec: &'a HashVec<OT>) -> impl Future<Item=Hash, Error=Error>
+fn write_object<'a, P, T, OT>(base_path: P, object: &'a T) -> impl Future<Item=Hash, Error=Error>
     where P: AsRef<Path>,
           OT: ObjectType,
-          &'a HashVec<OT>: TryInto<File<HashVec<OT>>, Error=bincode::Error>,
-          OT: 'a,
-          HashVec<OT>: ObjectType,
-
+          &'a T: TryInto<File<OT>, Error=bincode::Error>
 {
-    futures::done(TryInto::<File<HashVec<OT>>>::try_into(hash_vec))
+    futures::done(TryInto::<File<OT>>::try_into(object))
         .map_err(Into::into)
         .and_then(|file| write_file(base_path, file)
             .map_err(Into::into))
@@ -105,7 +102,7 @@ fn write_graph_vertices<P>(base_path: P, graph: &DirectedGraph) -> impl Future<I
     let files: Vec<Result<File<VertexId>>> = to_file_vec(graph.vertices());
 
     write_all_files(base_path.clone(), files)
-        .and_then(move |hash_vec| write_hash_vec(base_path, &hash_vec))
+        .and_then(move |hash_vec| write_object(base_path, &hash_vec))
 }
 
 fn write_graph_edges<P>(base_path: P, graph: &DirectedGraph) -> impl Future<Item=Hash, Error=Error>
@@ -115,7 +112,7 @@ fn write_graph_edges<P>(base_path: P, graph: &DirectedGraph) -> impl Future<Item
     let files: Vec<Result<File<HashEdge>>> = to_file_vec(graph.edges());
 
     write_all_files(base_path.clone(), files)
-        .and_then(move |hash_vec| write_hash_vec(base_path, &hash_vec))
+        .and_then(move |hash_vec| write_object(base_path, &hash_vec))
 }
 
 fn write_graph<P>(base_path: P, graph: &DirectedGraph) -> impl Future<Item=GraphHash, Error=Error>
@@ -141,7 +138,7 @@ pub fn save_graph_as<P>(base_path: P, name: String, graph: &DirectedGraph) -> im
         )
 }
 
-fn read_file<P, OT>(base_path: &P, hash: Hash) -> impl Future<Item=File<OT>, Error=io::Error>
+fn read_file<P, OT>(base_path: P, hash: Hash) -> impl Future<Item=File<OT>, Error=io::Error>
     where OT: ObjectType,
           P: AsRef<Path>
 {
@@ -150,7 +147,7 @@ fn read_file<P, OT>(base_path: &P, hash: Hash) -> impl Future<Item=File<OT>, Err
         .map(move |content| File::<OT>::new(content, hash))
 }
 
-fn read_object<P, OT>(base_path: &P, hash: Hash) -> impl Future<Item=OT, Error=Error>
+fn read_object<P, OT>(base_path: P, hash: Hash) -> impl Future<Item=OT, Error=Error>
     where OT: ObjectType,
           for<'a> &'a File<OT>: TryInto<OT, Error=bincode::Error> /* this is a "higher ranked trait bound" https://doc.rust-lang.org/nomicon/hrtb.html */,
           P: AsRef<Path>
@@ -164,10 +161,37 @@ fn read_object<P, OT>(base_path: &P, hash: Hash) -> impl Future<Item=OT, Error=E
 #[cfg(test)]
 mod test {
     use histo_graph_core::graph::graph::VertexId;
+    use std::path::{PathBuf, Path};
+    use crate::{
+        error::{Error, Result},
+        file::File,
+    };
+
+    use futures::future::Future;
+    use tokio::runtime::Runtime;
+
+    use super::{
+        write_object,
+        read_object,
+    };
 
     #[test]
-    fn test_write_read_vertex() {
+    fn test_write_read_vertex() -> Result<()>{
         let vertex = VertexId(27);
 
+        let base_path: PathBuf = Path::new("../target/test/store/").into();
+
+        let f = tokio_fs::create_dir_all(File::<VertexId>::create_dir(base_path.clone()))
+            .map_err(Into::into)
+            .and_then({
+                let base_path = base_path.clone();
+                move |_| write_object(base_path, &vertex)
+            })
+            .and_then(move |hash| read_object::<PathBuf, VertexId>(base_path, hash));
+
+        let mut rt = Runtime::new()?;
+        let result = rt.block_on(f)?;
+
+        Ok(assert_eq!(vertex, result))
     }
 }
