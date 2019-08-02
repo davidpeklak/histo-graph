@@ -16,14 +16,14 @@ use crate::{
         HashEdge,
         HashVec,
         GraphHash,
-    }
+    },
 };
 
 use histo_graph_core::graph::graph::{VertexId, Edge};
+use serde::Deserialize;
 
 /// Holds the data that is needed to store an object.
 pub(crate) struct File<OT> {
-
     /// The content to be stored.
     pub(crate) content: Vec<u8>,
 
@@ -42,7 +42,7 @@ impl<OT> File<OT>
         File {
             content,
             hash,
-            _pot: std::marker::PhantomData
+            _pot: std::marker::PhantomData,
         }
     }
 
@@ -164,8 +164,19 @@ impl TryFrom<&File<VertexId>> for VertexId {
 impl TryFrom<&File<HashEdge>> for HashEdge {
     type Error = bincode::Error;
 
-    fn try_from(file: &File<HashEdge>) -> Result<HashEdge,bincode::Error> {
+    fn try_from(file: &File<HashEdge>) -> Result<HashEdge, bincode::Error> {
         bincode::deserialize::<HashEdge>(file.content.as_ref())
+    }
+}
+
+impl<'de, OT> TryFrom<&'de File<HashVec<OT>>> for HashVec<OT>
+    where HashVec<OT>: ObjectType,
+          HashVec<OT>: Deserialize<'de>
+{
+    type Error = bincode::Error;
+
+    fn try_from(file: &'de File<HashVec<OT>>) -> Result<HashVec<OT>, bincode::Error> {
+        bincode::deserialize::<HashVec<OT>>(file.content.as_ref())
     }
 }
 

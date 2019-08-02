@@ -66,7 +66,6 @@ fn write_all_files<P, OT>(base_path: P, files: Vec<Result<File<OT>>>) -> impl Fu
           P: Clone
 {
     let base_path: PathBuf = base_path.as_ref().into();
-    let base_path_clone = base_path.clone();
 
     let futs = files
         .into_iter()
@@ -77,11 +76,18 @@ fn write_all_files<P, OT>(base_path: P, files: Vec<Result<File<OT>>>) -> impl Fu
                 .map_err(Into::into)
         }));
 
-
-    tokio_fs::create_dir_all(File::<OT>::create_dir(base_path_clone))
-        .map_err(Into::into)
-        .and_then(|_| futures::future::join_all(futs))
+    futures::future::join_all(futs)
         .map(HashVec::new)
+}
+
+fn create_dir_and_write_all_files<P, OT>(base_path: P, files: Vec<Result<File<OT>>>) -> impl Future<Item=HashVec<OT>, Error=Error>
+    where OT: ObjectType,
+          P: AsRef<Path>,
+          P: Clone
+{
+    tokio_fs::create_dir_all(File::<OT>::create_dir(base_path.clone()))
+        .map_err(Into::into)
+        .and_then(|_| write_all_files(base_path, files))
 }
 
 fn write_object<'a, P, T, OT>(base_path: P, object: &'a T) -> impl Future<Item=Hash, Error=Error>
@@ -95,14 +101,28 @@ fn write_object<'a, P, T, OT>(base_path: P, object: &'a T) -> impl Future<Item=H
             .map_err(Into::into))
 }
 
+fn create_dir_and_write_object<'a, P, T, OT>(base_path: P, object: &'a T) -> impl Future<Item=Hash, Error=Error>
+    where P: AsRef<Path>,
+          P: Clone,
+          OT: ObjectType,
+          &'a T: TryInto<File<OT>, Error=bincode::Error>
+{
+    let f = write_object(base_path.clone(), object);
+    tokio_fs::create_dir_all(File::<OT>::create_dir(base_path))
+        .map_err(Into::into)
+        .and_then(move |_| f)
+}
+
+/// Writes the vertices of `graph`.
+/// Creates the necessary directories.
 fn write_graph_vertices<P>(base_path: P, graph: &DirectedGraph) -> impl Future<Item=Hash, Error=Error>
     where P: AsRef<Path>,
           P: Clone
 {
     let files: Vec<Result<File<VertexId>>> = to_file_vec(graph.vertices());
 
-    write_all_files(base_path.clone(), files)
-        .and_then(move |hash_vec| write_object(base_path, &hash_vec))
+    create_dir_and_write_all_files(base_path.clone(), files)
+        .and_then(move |hash_vec| create_dir_and_write_object(base_path, &hash_vec))
 }
 
 fn write_graph_edges<P>(base_path: P, graph: &DirectedGraph) -> impl Future<Item=Hash, Error=Error>
@@ -111,8 +131,8 @@ fn write_graph_edges<P>(base_path: P, graph: &DirectedGraph) -> impl Future<Item
 {
     let files: Vec<Result<File<HashEdge>>> = to_file_vec(graph.edges());
 
-    write_all_files(base_path.clone(), files)
-        .and_then(move |hash_vec| write_object(base_path, &hash_vec))
+    create_dir_and_write_all_files(base_path.clone(), files)
+        .and_then(move |hash_vec| create_dir_and_write_object(base_path, &hash_vec))
 }
 
 fn write_graph<P>(base_path: P, graph: &DirectedGraph) -> impl Future<Item=GraphHash, Error=Error>
@@ -169,6 +189,35 @@ fn read_edge<P>(base_path: P, hash: Hash) -> impl Future<Item=Edge, Error=Error>
             from_fut.join(to_fut)
         })
         .map(|(from, to)| Edge(from, to))
+}
+
+fn read_all_objects<P, OT>(base_path: P, hashes: Vec<Hash>) -> impl Future<Item=Vec<OT>, Error=Error>
+    where P: AsRef<Path>,
+          P: Clone,
+          OT: ObjectType,
+          for<'a> &'a File<OT>: TryInto<OT, Error=bincode::Error>
+{
+    let futs = hashes
+        .into_iter()
+        .map({
+            move |hash| read_object::<P, OT>(base_path.clone(), hash)
+        });
+
+    futures::future::join_all(futs)
+}
+
+fn read_graph_vertices<P>(base_path: P, hash: Hash, mut graph: DirectedGraph) -> impl Future<Item=DirectedGraph, Error=Error>
+    where P: AsRef<Path>,
+          P: Clone
+{
+    read_object::<P, HashVec<VertexId>>(base_path.clone(), hash)
+        .and_then(|hash_vec| read_all_objects(base_path, hash_vec.0))
+        .and_then(|vertices| {
+            for v in vertices {
+                graph.add_vertex(v);
+            }
+            Ok(graph)
+        })
 }
 
 #[cfg(test)]

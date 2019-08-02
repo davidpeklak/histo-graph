@@ -22,7 +22,7 @@ pub(crate) struct HashEdge {
 /// or `HashEdge`s.
 ///
 /// [`Hash`]: ../struct.Hash.html
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub(crate) struct HashVec<OT>(pub(crate) Vec<Hash>, std::marker::PhantomData<OT>);
 
 impl<OT> HashVec<OT>
