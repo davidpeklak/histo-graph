@@ -99,15 +99,6 @@ impl TryFrom<&VertexId> for File<VertexId> {
     }
 }
 
-impl TryFrom<&File<VertexId>> for VertexId {
-    type Error = bincode::Error;
-
-    fn try_from(file: &File<VertexId>) -> std::result::Result<Self, Self::Error> {
-        let id: u64 = bincode::deserialize(file.content.as_ref())?;
-        Ok(VertexId(id))
-    }
-}
-
 impl TryFrom<&Edge> for File<HashEdge> {
     type Error = bincode::Error;
 
@@ -158,6 +149,23 @@ impl TryFrom<&GraphHash> for File<GraphHash> {
             hash,
             _pot: std::marker::PhantomData,
         })
+    }
+}
+
+impl TryFrom<&File<VertexId>> for VertexId {
+    type Error = bincode::Error;
+
+    fn try_from(file: &File<VertexId>) -> std::result::Result<VertexId, bincode::Error> {
+        let id: u64 = bincode::deserialize(file.content.as_ref())?;
+        Ok(VertexId(id))
+    }
+}
+
+impl TryFrom<&File<HashEdge>> for HashEdge {
+    type Error = bincode::Error;
+
+    fn try_from(file: &File<HashEdge>) -> Result<HashEdge,bincode::Error> {
+        bincode::deserialize::<HashEdge>(file.content.as_ref())
     }
 }
 

@@ -1,5 +1,5 @@
 use histo_graph_core::graph::{
-    graph::VertexId,
+    graph::{VertexId, Edge},
     directed_graph::DirectedGraph,
 };
 
@@ -158,12 +158,25 @@ fn read_object<P, OT>(base_path: P, hash: Hash) -> impl Future<Item=OT, Error=Er
         .map_err(Into::into)
 }
 
+fn read_edge<P>(base_path: P, hash: Hash) -> impl Future<Item=Edge, Error=Error>
+    where P: AsRef<Path>,
+          P: Clone
+{
+    read_object::<P, HashEdge>(base_path.clone(), hash)
+        .and_then(move |HashEdge { from, to }| {
+            let from_fut = read_object::<P, VertexId>(base_path.clone(), from);
+            let to_fut = read_object::<P, VertexId>(base_path, to);
+            from_fut.join(to_fut)
+        })
+        .map(|(from, to)| Edge(from, to))
+}
+
 #[cfg(test)]
 mod test {
-    use histo_graph_core::graph::graph::VertexId;
+    use histo_graph_core::graph::graph::{VertexId, Edge};
     use std::path::{PathBuf, Path};
     use crate::{
-        error::{Error, Result},
+        error::Result,
         file::File,
     };
 
@@ -174,12 +187,14 @@ mod test {
         write_object,
         read_object,
     };
+    use crate::object::HashEdge;
+    use crate::file_storage_exp::read_edge;
 
     #[test]
-    fn test_write_read_vertex() -> Result<()>{
-        let vertex = VertexId(27);
-
+    fn test_write_read_vertex() -> Result<()> {
         let base_path: PathBuf = Path::new("../target/test/store/").into();
+
+        let vertex = VertexId(27);
 
         let f = tokio_fs::create_dir_all(File::<VertexId>::create_dir(base_path.clone()))
             .map_err(Into::into)
@@ -193,5 +208,34 @@ mod test {
         let result = rt.block_on(f)?;
 
         Ok(assert_eq!(vertex, result))
+    }
+
+    #[test]
+    fn test_write_read_edge() -> Result<()> {
+        let base_path: PathBuf = Path::new("../target/test/store/").into();
+
+        let edge = Edge(VertexId(3), VertexId(4));
+
+        let f = tokio_fs::create_dir_all(File::<VertexId>::create_dir(base_path.clone()))
+            .and_then({
+                let base_path = base_path.clone();
+                move |_| tokio_fs::create_dir_all(File::<HashEdge>::create_dir(base_path))
+            })
+            .map_err(Into::into)
+            .and_then({
+                let base_path = base_path.clone();
+                move |_| {
+                    let f_1 = write_object(base_path.clone(), &edge.0);
+                    let f_2 = write_object(base_path.clone(), &edge.1);
+                    let f_3 = write_object(base_path, &edge);
+                    f_1.join3(f_2, f_3)
+                }
+            })
+            .and_then(move |(_, _, hash)| read_edge(base_path, hash));
+
+        let mut rt = Runtime::new()?;
+        let result = rt.block_on(f)?;
+
+        Ok(assert_eq!(edge, result))
     }
 }
