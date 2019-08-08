@@ -206,11 +206,24 @@ fn read_all_objects<P, OT>(base_path: P, hashes: Vec<Hash>) -> impl Future<Item=
     futures::future::join_all(futs)
 }
 
-fn read_graph_vertices<P>(base_path: P, hash: Hash, mut graph: DirectedGraph) -> impl Future<Item=DirectedGraph, Error=Error>
+fn read_all_edges<P>(base_path: P, hashes: Vec<Hash>) -> impl Future<Item=Vec<Edge>, Error=Error>
     where P: AsRef<Path>,
           P: Clone
 {
-    read_object::<P, HashVec<VertexId>>(base_path.clone(), hash)
+    let futs = hashes
+        .into_iter()
+        .map({
+            move |hash| read_edge::<P>(base_path.clone(), hash)
+        });
+
+    futures::future::join_all(futs)
+}
+
+fn read_graph_vertices<P>(base_path: P, vertex_vec_hash: Hash, mut graph: DirectedGraph) -> impl Future<Item=DirectedGraph, Error=Error>
+    where P: AsRef<Path>,
+          P: Clone
+{
+    read_object::<P, HashVec<VertexId>>(base_path.clone(), vertex_vec_hash)
         .and_then(|hash_vec| read_all_objects(base_path, hash_vec.0))
         .and_then(|vertices| {
             for v in vertices {
@@ -218,6 +231,30 @@ fn read_graph_vertices<P>(base_path: P, hash: Hash, mut graph: DirectedGraph) ->
             }
             Ok(graph)
         })
+}
+
+fn read_graph_edges<P>(base_path: P, edge_vec_hash: Hash, mut graph: DirectedGraph) -> impl Future<Item=DirectedGraph, Error=Error>
+    where P: AsRef<Path>,
+          P: Clone
+{
+    read_object::<P, HashVec<HashEdge>>(base_path.clone(), edge_vec_hash)
+        .and_then(|hash_vec| read_all_edges(base_path, hash_vec.0))
+        .and_then(|edges| {
+            for e in edges {
+                graph.add_edge(e);
+            }
+            Ok(graph)
+        })
+}
+
+fn read_graph<P>(base_path: P, graph_hash: &GraphHash) -> impl Future<Item=DirectedGraph, Error=Error>
+    where P: AsRef<Path>,
+          P: Clone
+{
+    let &GraphHash { vertex_vec_hash, edge_vec_hash } = graph_hash;
+
+    read_graph_vertices(base_path.clone(), vertex_vec_hash, DirectedGraph::new())
+        .and_then(move |graph| read_graph_edges(base_path, edge_vec_hash, graph))
 }
 
 #[cfg(test)]
@@ -286,7 +323,7 @@ mod test {
     }
 
     #[test]
-    fn test_read_graph_vertices() -> Result<()> {
+    fn test_write_read_graph_vertices() -> Result<()> {
         let base_path: PathBuf = Path::new("../target/test/store/").into();
 
         let graph = {
@@ -301,6 +338,49 @@ mod test {
                 let graph = DirectedGraph::new();
                 read_graph_vertices(base_path, hash, graph)
             });
+
+        let mut rt = Runtime::new()?;
+        let result = rt.block_on(f)?;
+
+        Ok(assert_eq!(graph, result))
+    }
+
+    #[test]
+    fn test_write_read_graph_edges() -> Result<()> {
+        let base_path: PathBuf = Path::new("../target/test/store/").into();
+
+        let graph = {
+            let mut graph = DirectedGraph::new();
+            graph.add_edge(Edge(VertexId(14), VertexId(17)));
+            graph.add_edge(Edge(VertexId(14), VertexId(15)));
+            graph
+        };
+
+        let f = write_graph_vertices(base_path.clone(), &graph)
+            .and_then(move |hash| {
+                let graph = DirectedGraph::new();
+                read_graph_edges(base_path, hash, graph)
+            });
+
+        let mut rt = Runtime::new()?;
+        let result = rt.block_on(f)?;
+
+        Ok(assert_eq!(graph, result))
+    }
+
+    #[test]
+    fn test_write_read_graph() -> Result<()> {
+        let base_path: PathBuf = Path::new("../target/test/store/").into();
+
+        let graph = {
+            let mut graph = DirectedGraph::new();
+            graph.add_vertex(VertexId(14));
+            graph.add_edge(Edge(VertexId(14), VertexId(15)));
+            graph
+        };
+
+        let f = write_graph(base_path.clone(), &graph)
+            .and_then(move |grap_hash| read_graph(base_path, &grap_hash));
 
         let mut rt = Runtime::new()?;
         let result = rt.block_on(f)?;
