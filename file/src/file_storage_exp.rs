@@ -232,12 +232,9 @@ mod test {
     use futures::future::Future;
     use tokio::runtime::Runtime;
 
-    use super::{
-        write_object,
-        read_object,
-    };
+    use super::*;
     use crate::object::HashEdge;
-    use crate::file_storage_exp::read_edge;
+    use histo_graph_core::graph::directed_graph::DirectedGraph;
 
     #[test]
     fn test_write_read_vertex() -> Result<()> {
@@ -286,5 +283,28 @@ mod test {
         let result = rt.block_on(f)?;
 
         Ok(assert_eq!(edge, result))
+    }
+
+    #[test]
+    fn test_read_graph_vertices() -> Result<()> {
+        let base_path: PathBuf = Path::new("../target/test/store/").into();
+
+        let graph = {
+            let mut graph = DirectedGraph::new();
+            graph.add_vertex(VertexId(14));
+            graph.add_vertex(VertexId(17));
+            graph
+        };
+
+        let f = write_graph_vertices(base_path.clone(), &graph)
+            .and_then(move |hash| {
+                let graph = DirectedGraph::new();
+                read_graph_vertices(base_path, hash, graph)
+            });
+
+        let mut rt = Runtime::new()?;
+        let result = rt.block_on(f)?;
+
+        Ok(assert_eq!(graph, result))
     }
 }
