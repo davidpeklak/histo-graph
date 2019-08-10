@@ -1,3 +1,5 @@
+//! Implements the functions that write and read a graph to the file system.
+
 use histo_graph_core::graph::{
     graph::{VertexId, Edge},
     directed_graph::DirectedGraph,
@@ -24,19 +26,17 @@ use crate::{
     file::File,
 };
 
-
-fn to_file_vec<I, T, OT>(i: I) -> Vec<Result<File<OT>>>
+/// Takes an interator over objects of type `OT` and returns a vector of `File<OT>`.
+fn to_file_vec<I, T, OT>(i: I) -> Result<Vec<File<OT>>>
     where I: IntoIterator<Item=T>,
           T: TryInto<File<OT>, Error=bincode::Error>,
           OT: ObjectType
 {
-    let files: Vec<Result<File<OT>>> = i
+    i
         .into_iter()
         .map(TryInto::<File<OT>>::try_into)
         .map(|r| r.map_err(Into::into))
-        .collect();
-
-    files
+        .collect()
 }
 
 fn write_file<P, OT>(base_path: P, file: File<OT>) -> impl Future<Item=Hash, Error=io::Error>
@@ -60,7 +60,7 @@ fn write_named_file<P, S, NOT>(base_path: P, name: S, file: File<NOT>) -> impl F
         .map(|_| ())
 }
 
-fn write_all_files<P, OT>(base_path: P, files: Vec<Result<File<OT>>>) -> impl Future<Item=HashVec<OT>, Error=Error>
+fn write_all_files<P, OT>(base_path: P, files: Vec<File<OT>>) -> impl Future<Item=HashVec<OT>, Error=Error>
     where OT: ObjectType,
           P: AsRef<Path>,
           P: Clone
@@ -69,18 +69,17 @@ fn write_all_files<P, OT>(base_path: P, files: Vec<Result<File<OT>>>) -> impl Fu
 
     let futs = files
         .into_iter()
-        .map(futures::done)
-        .map(move |fut| fut.and_then({
+        .map(move |file| {
             let base_path = base_path.clone();
-            move |file| write_file(base_path, file)
+            write_file(base_path, file)
                 .map_err(Into::into)
-        }));
+        });
 
     futures::future::join_all(futs)
         .map(HashVec::new)
 }
 
-fn create_dir_and_write_all_files<P, OT>(base_path: P, files: Vec<Result<File<OT>>>) -> impl Future<Item=HashVec<OT>, Error=Error>
+fn create_dir_and_write_all_files<P, OT>(base_path: P, files: Vec<File<OT>>) -> impl Future<Item=HashVec<OT>, Error=Error>
     where OT: ObjectType,
           P: AsRef<Path>,
           P: Clone
@@ -119,19 +118,25 @@ fn write_graph_vertices<P>(base_path: P, graph: &DirectedGraph) -> impl Future<I
     where P: AsRef<Path>,
           P: Clone
 {
-    let files: Vec<Result<File<VertexId>>> = to_file_vec(graph.vertices());
-
-    create_dir_and_write_all_files(base_path.clone(), files)
+    futures::done(to_file_vec(graph.vertices()))
+        .and_then({
+            let base_path = base_path.clone();
+            move |files| create_dir_and_write_all_files(base_path, files)
+        })
         .and_then(move |hash_vec| create_dir_and_write_object(base_path, &hash_vec))
 }
 
+/// Writes the edges of `graph`.
+/// Creates the necessary directories
 fn write_graph_edges<P>(base_path: P, graph: &DirectedGraph) -> impl Future<Item=Hash, Error=Error>
     where P: AsRef<Path>,
           P: Clone
 {
-    let files: Vec<Result<File<HashEdge>>> = to_file_vec(graph.edges());
-
-    create_dir_and_write_all_files(base_path.clone(), files)
+    futures::done(to_file_vec(graph.edges()))
+        .and_then({
+            let base_path = base_path.clone();
+            move |files| create_dir_and_write_all_files(base_path, files)
+        })
         .and_then(move |hash_vec| create_dir_and_write_object(base_path, &hash_vec))
 }
 
@@ -248,6 +253,10 @@ fn read_all_edges<P>(base_path: P, hashes: Vec<Hash>) -> impl Future<Item=Vec<Ed
     futures::future::join_all(futs)
 }
 
+/// Reads the vertices of a graph.
+///
+/// Note that this function consumes the graph, and gives it back in the returned Future, with
+/// the vertices added.
 fn read_graph_vertices<P>(base_path: P, vertex_vec_hash: Hash, mut graph: DirectedGraph) -> impl Future<Item=DirectedGraph, Error=Error>
     where P: AsRef<Path>,
           P: Clone
@@ -262,6 +271,10 @@ fn read_graph_vertices<P>(base_path: P, vertex_vec_hash: Hash, mut graph: Direct
         })
 }
 
+/// Reads the edges of a graph.
+///
+/// Note that this function consumes the graph, and gives it back in the returned Future, with
+/// the edges added.
 fn read_graph_edges<P>(base_path: P, edge_vec_hash: Hash, mut graph: DirectedGraph) -> impl Future<Item=DirectedGraph, Error=Error>
     where P: AsRef<Path>,
           P: Clone
