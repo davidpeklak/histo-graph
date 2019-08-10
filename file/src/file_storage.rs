@@ -396,29 +396,6 @@ mod test {
     }
 
     #[test]
-    fn test_write_read_graph_edges() -> Result<()> {
-        let base_path: PathBuf = Path::new("../target/test/store/").into();
-
-        let graph = {
-            let mut graph = DirectedGraph::new();
-            graph.add_edge(Edge(VertexId(14), VertexId(17)));
-            graph.add_edge(Edge(VertexId(14), VertexId(15)));
-            graph
-        };
-
-        let f = write_graph_edges(base_path.clone(), &graph)
-            .and_then(move |hash| {
-                let graph = DirectedGraph::new();
-                read_graph_edges(base_path, hash, graph)
-            });
-
-        let mut rt = Runtime::new()?;
-        let result = rt.block_on(f)?;
-
-        Ok(assert_eq!(graph, result))
-    }
-
-    #[test]
     fn test_write_read_graph() -> Result<()> {
         let base_path: PathBuf = Path::new("../target/test/store/").into();
 
