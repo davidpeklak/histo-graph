@@ -75,7 +75,7 @@ impl<NOT> File<NOT>
           NOT: NamedObjectType
 {
     /// Returns the path of the file, which is stored under the provided name.
-    pub(crate) fn create_named_path<P, S>(&self, base_path: P, name: S) -> PathBuf
+    pub(crate) fn create_named_path<P, S>(base_path: P, name: S) -> PathBuf
         where P: AsRef<Path>,
               S: AsRef<str>
     {
@@ -177,6 +177,14 @@ impl<'de, OT> TryFrom<&'de File<HashVec<OT>>> for HashVec<OT>
 
     fn try_from(file: &'de File<HashVec<OT>>) -> Result<HashVec<OT>, bincode::Error> {
         bincode::deserialize::<HashVec<OT>>(file.content.as_ref())
+    }
+}
+
+impl TryFrom<&File<GraphHash>> for GraphHash {
+    type Error = bincode::Error;
+
+    fn try_from(file: &File<GraphHash>) -> Result<GraphHash, bincode::Error> {
+        bincode::deserialize::<GraphHash>(file.content.as_ref())
     }
 }
 

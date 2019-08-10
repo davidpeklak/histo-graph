@@ -37,7 +37,7 @@ where OT: ObjectType {
 }
 
 /// The top-object of a stored graph.
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub(crate) struct GraphHash {
 
     /// The [`Hash`] of the [`HashVec`] of the vertices.

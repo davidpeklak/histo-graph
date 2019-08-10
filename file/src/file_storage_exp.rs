@@ -49,13 +49,13 @@ fn write_file<P, OT>(base_path: P, file: File<OT>) -> impl Future<Item=Hash, Err
         .map(move |_| hash)
 }
 
-fn write_named_file<P, S, NOT>(base_path: &P, name: S, file: File<NOT>) -> impl Future<Item=(), Error=io::Error>
+fn write_named_file<P, S, NOT>(base_path: P, name: S, file: File<NOT>) -> impl Future<Item=(), Error=io::Error>
     where NOT: ObjectType,
           NOT: NamedObjectType,
           P: AsRef<Path>,
           S: AsRef<str>
 {
-    let path: PathBuf = file.create_named_path(base_path, name);
+    let path: PathBuf = File::<NOT>::create_named_path(base_path, name);
     tokio_fs::write(path, file.content)
         .map(|_| ())
 }
@@ -153,9 +153,11 @@ pub fn save_graph_as<P>(base_path: P, name: String, graph: &DirectedGraph) -> im
     write_graph(base_path.clone(), graph)
         .and_then(|graph_hash| TryInto::<File<GraphHash>>::try_into(&graph_hash)
             .map_err(Into::into))
-        .and_then(move |file| write_named_file(&base_path, name, file)
-            .map_err(Into::into)
-        )
+        .and_then(move |file| {
+            tokio_fs::create_dir_all(File::<GraphHash>::create_dir(base_path.clone()))
+                .and_then(|_| write_named_file(base_path, name, file))
+                .map_err(Into::into)
+        })
 }
 
 fn read_file<P, OT>(base_path: P, hash: Hash) -> impl Future<Item=File<OT>, Error=io::Error>
@@ -167,12 +169,39 @@ fn read_file<P, OT>(base_path: P, hash: Hash) -> impl Future<Item=File<OT>, Erro
         .map(move |content| File::<OT>::new(content, hash))
 }
 
+fn read_named_file<P, S, NOT>(base_path: P, name: S) -> impl Future<Item=File<NOT>, Error=io::Error>
+    where NOT: ObjectType,
+          NOT: NamedObjectType,
+          P: AsRef<Path>,
+          S: AsRef<str>
+{
+    let path: PathBuf = File::<NOT>::create_named_path(base_path, name);
+    tokio_fs::read(path)
+        .map(move |content| {
+            let hash: Hash = (&content).into();
+            File::<NOT>::new(content, hash)
+        })
+}
+
 fn read_object<P, OT>(base_path: P, hash: Hash) -> impl Future<Item=OT, Error=Error>
     where OT: ObjectType,
           for<'a> &'a File<OT>: TryInto<OT, Error=bincode::Error> /* this is a "higher ranked trait bound" https://doc.rust-lang.org/nomicon/hrtb.html */,
           P: AsRef<Path>
 {
     read_file::<P, OT>(base_path, hash)
+        .map_err(Into::into)
+        .and_then(|file| futures::done((&file).try_into()))
+        .map_err(Into::into)
+}
+
+fn read_named_object<P, S, NOT>(base_path: P, name: S) -> impl Future<Item=NOT, Error=Error>
+    where NOT: ObjectType,
+          NOT: NamedObjectType,
+          for<'a> &'a File<NOT>: TryInto<NOT, Error=bincode::Error> /* this is a "higher ranked trait bound" https://doc.rust-lang.org/nomicon/hrtb.html */,
+          P: AsRef<Path>,
+          S: AsRef<str>
+{
+    read_named_file::<P, S, NOT>(base_path, name)
         .map_err(Into::into)
         .and_then(|file| futures::done((&file).try_into()))
         .map_err(Into::into)
@@ -255,6 +284,14 @@ fn read_graph<P>(base_path: P, graph_hash: &GraphHash) -> impl Future<Item=Direc
 
     read_graph_vertices(base_path.clone(), vertex_vec_hash, DirectedGraph::new())
         .and_then(move |graph| read_graph_edges(base_path, edge_vec_hash, graph))
+}
+
+pub fn load_graph<P>(base_path: P, name: String) -> impl Future<Item=DirectedGraph, Error=Error>
+    where P: AsRef<Path>,
+          P: Clone
+{
+    read_named_object::<P, String, GraphHash>(base_path.clone(), name)
+        .and_then(move |graph_hash| read_graph(base_path, &graph_hash))
 }
 
 #[cfg(test)]
@@ -356,7 +393,7 @@ mod test {
             graph
         };
 
-        let f = write_graph_vertices(base_path.clone(), &graph)
+        let f = write_graph_edges(base_path.clone(), &graph)
             .and_then(move |hash| {
                 let graph = DirectedGraph::new();
                 read_graph_edges(base_path, hash, graph)
@@ -381,6 +418,27 @@ mod test {
 
         let f = write_graph(base_path.clone(), &graph)
             .and_then(move |grap_hash| read_graph(base_path, &grap_hash));
+
+        let mut rt = Runtime::new()?;
+        let result = rt.block_on(f)?;
+
+        Ok(assert_eq!(graph, result))
+    }
+
+    #[test]
+    fn test_save_as_and_load_graph() -> Result<()> {
+        let base_path: PathBuf = Path::new("../target/test/store/").into();
+        let name = "graph_pepi".to_string();
+
+        let graph = {
+            let mut graph = DirectedGraph::new();
+            graph.add_vertex(VertexId(14));
+            graph.add_edge(Edge(VertexId(14), VertexId(15)));
+            graph
+        };
+
+        let f = save_graph_as(base_path.clone(), name.clone(), &graph)
+            .and_then(move |_| load_graph(base_path, name));
 
         let mut rt = Runtime::new()?;
         let result = rt.block_on(f)?;
