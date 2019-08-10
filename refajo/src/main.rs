@@ -2,7 +2,6 @@ use clap::{App, SubCommand, Arg};
 use histo_graph_file::file_storage::*;
 use std::path::{PathBuf, Path};
 use histo_graph_serde::directed_graph_serde::DirectedGraphSer;
-use std::ffi::OsString;
 use tokio::runtime::Runtime;
 use error::Result;
 use histo_graph_core::graph::directed_graph::DirectedGraph;
@@ -38,12 +37,12 @@ fn main() -> Result<()> {
         .get_matches();
 
     let base_dir: PathBuf = Path::new(".store/").into();
-    let name = &OsString::from("current");
+    let name = "current".to_string();
 
     if let Some(_) = matches.subcommand_matches("show") {
         println!("Running sub-command 'show' ");
 
-        let f = load_graph(base_dir, &name);
+        let f = load_graph(base_dir, name);
 
         let mut rt = Runtime::new()?;
         let graph = rt.block_on(f)?;
@@ -59,7 +58,7 @@ fn main() -> Result<()> {
 
         let graph = DirectedGraph::new();
 
-        let f = save_graph_as(base_dir, &name, &graph);
+        let f = save_graph_as(base_dir, name, &graph);
 
         let mut rt = Runtime::new()?;
         rt.block_on(f)?;
@@ -75,12 +74,12 @@ fn main() -> Result<()> {
             let vertex_id: u64 = std::str::FromStr::from_str(vertex_id)?;
             let vertex_id = VertexId(vertex_id);
 
-            let f = load_graph(base_dir.clone(), &name)
+            let f = load_graph(base_dir.clone(), name.clone())
                 .and_then(move |mut graph| {
                     graph.add_vertex(vertex_id);
                     Ok(graph)
                 })
-                .and_then({ let name = name.clone(); move |graph| save_graph_as(base_dir, &name, &graph)});
+                .and_then({ let name = name.clone(); move |graph| save_graph_as(base_dir, name, &graph)});
 
             let mut rt = Runtime::new()?;
             rt.block_on(f)?;
@@ -99,12 +98,12 @@ fn main() -> Result<()> {
 
             let edge = Edge(VertexId(vertex_id_from),  VertexId(vertex_id_to));
 
-            let f = load_graph(base_dir.clone(), &name)
+            let f = load_graph(base_dir.clone(), name.clone())
                 .and_then(move |mut graph| {
                     graph.add_edge(edge);
                     Ok(graph)
                 })
-                .and_then({ let name = name.clone(); move |graph| save_graph_as(base_dir, &name, &graph)});
+                .and_then({ let name = name.clone(); move |graph| save_graph_as(base_dir, name, &graph)});
 
             let mut rt = Runtime::new()?;
             rt.block_on(f)?;
