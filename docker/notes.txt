@@ -1,0 +1,8 @@
+cargo build --release --target x86_64-unknown-linux-gnu
+cp ../target/release/refajo .
+
+docker pull debian:stretch
+
+docker build --tag=refajo .
+
+docker run -d --mount type=bind,source="$(pwd)"/../,target=/app
