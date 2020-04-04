@@ -6,7 +6,7 @@ edition = "2018"
 
 [dependencies]
 histo-graph-core = { path = "../core" }
-serde = { version = "1.0.92", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
 
 [dev-dependencies]
-serde_json = "1.0.39"
+serde_json = "1.0"

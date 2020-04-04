@@ -5,14 +5,15 @@ use histo_graph_core::graph::{
     directed_graph::DirectedGraph,
 };
 
-use crate::error::{Error, Result};
+use crate::error::Result;
 
-use futures::future::Future;
 use std::{
     io,
     path::{Path, PathBuf},
 };
 use std::convert::TryInto;
+use tokio::fs;
+use futures;
 
 use crate::{
     Hash,
@@ -39,28 +40,27 @@ fn to_file_vec<I, T, OT>(i: I) -> Result<Vec<File<OT>>>
         .collect()
 }
 
-fn write_file<P, OT>(base_path: P, file: File<OT>) -> impl Future<Item=Hash, Error=io::Error>
+async fn write_file<P, OT>(base_path: P, file: File<OT>) -> std::result::Result<Hash, io::Error>
     where OT: ObjectType,
           P: AsRef<Path>
 {
     let path: PathBuf = file.create_path(base_path);
-    let hash = file.hash;
-    tokio_fs::write(path, file.content)
-        .map(move |_| hash)
+    fs::write(path, file.content).await?;
+    Ok(file.hash)
 }
 
-fn write_named_file<P, S, NOT>(base_path: P, name: S, file: File<NOT>) -> impl Future<Item=(), Error=io::Error>
+async fn write_named_file<P, S, NOT>(base_path: P, name: S, file: File<NOT>) -> std::result::Result<(), io::Error>
     where NOT: ObjectType,
           NOT: NamedObjectType,
           P: AsRef<Path>,
           S: AsRef<str>
 {
     let path: PathBuf = File::<NOT>::create_named_path(base_path, name);
-    tokio_fs::write(path, file.content)
-        .map(|_| ())
+    fs::write(path, file.content).await?;
+    Ok(())
 }
 
-fn write_all_files<P, OT>(base_path: P, files: Vec<File<OT>>) -> impl Future<Item=HashVec<OT>, Error=Error>
+async fn write_all_files<P, OT>(base_path: P, files: Vec<File<OT>>) -> Result<HashVec<OT>>
     where OT: ObjectType,
           P: AsRef<Path>,
           P: Clone
@@ -69,163 +69,134 @@ fn write_all_files<P, OT>(base_path: P, files: Vec<File<OT>>) -> impl Future<Ite
 
     let futs = files
         .into_iter()
-        .map(move |file| {
-            let base_path = base_path.clone();
-            write_file(base_path, file)
-                .map_err(Into::into)
-        });
+        .map(|file| write_file(base_path.clone(), file));
 
-    futures::future::join_all(futs)
-        .map(HashVec::new)
+    let vec = futures::future::try_join_all(futs).await?;
+
+    Ok(HashVec::<OT>::new(vec))
 }
 
-fn create_dir_and_write_all_files<P, OT>(base_path: P, files: Vec<File<OT>>) -> impl Future<Item=HashVec<OT>, Error=Error>
+async fn create_dir_and_write_all_files<P, OT>(base_path: P, files: Vec<File<OT>>) -> Result<HashVec<OT>>
     where OT: ObjectType,
           P: AsRef<Path>,
           P: Clone
 {
-    tokio_fs::create_dir_all(File::<OT>::create_dir(base_path.clone()))
-        .map_err(Into::into)
-        .and_then(|_| write_all_files(base_path, files))
+    fs::create_dir_all(File::<OT>::create_dir(base_path.clone())).await?;
+    write_all_files(base_path, files).await
 }
 
-fn write_object<'a, P, T, OT>(base_path: P, object: &'a T) -> impl Future<Item=Hash, Error=Error>
+async fn write_object<'a, P, T, OT>(base_path: P, object: &'a T) -> Result<Hash>
     where P: AsRef<Path>,
           OT: ObjectType,
           &'a T: TryInto<File<OT>, Error=bincode::Error>
 {
-    futures::done(TryInto::<File<OT>>::try_into(object))
-        .map_err(Into::into)
-        .and_then(|file| write_file(base_path, file)
-            .map_err(Into::into))
+    let file = TryInto::<File<OT>>::try_into(object)?;
+    Ok(write_file(base_path, file).await?)
 }
 
-fn create_dir_and_write_object<'a, P, T, OT>(base_path: P, object: &'a T) -> impl Future<Item=Hash, Error=Error>
+async fn create_dir_and_write_object<'a, P, T, OT>(base_path: P, object: &'a T) -> Result<Hash>
     where P: AsRef<Path>,
           P: Clone,
           OT: ObjectType,
           &'a T: TryInto<File<OT>, Error=bincode::Error>
 {
-    let f = write_object(base_path.clone(), object);
-    tokio_fs::create_dir_all(File::<OT>::create_dir(base_path))
-        .map_err(Into::into)
-        .and_then(move |_| f)
+    fs::create_dir_all(File::<OT>::create_dir(base_path.clone())).await?;
+    write_object(base_path, object).await
 }
 
 /// Writes the vertices of `graph`.
 /// Creates the necessary directories.
-fn write_graph_vertices<P>(base_path: P, graph: &DirectedGraph) -> impl Future<Item=Hash, Error=Error>
+async fn write_graph_vertices<P>(base_path: P, graph: &DirectedGraph) -> Result<Hash>
     where P: AsRef<Path>,
           P: Clone
 {
-    futures::done(to_file_vec(graph.vertices()))
-        .and_then({
-            let base_path = base_path.clone();
-            move |files| create_dir_and_write_all_files(base_path, files)
-        })
-        .and_then(move |hash_vec| create_dir_and_write_object(base_path, &hash_vec))
+    let files = to_file_vec(graph.vertices())?;
+    let hash_vec = create_dir_and_write_all_files(base_path.clone(), files).await?;
+    create_dir_and_write_object(base_path, &hash_vec).await
 }
 
 /// Writes the edges of `graph`.
 /// Creates the necessary directories
-fn write_graph_edges<P>(base_path: P, graph: &DirectedGraph) -> impl Future<Item=Hash, Error=Error>
+async fn write_graph_edges<P>(base_path: P, graph: &DirectedGraph) -> Result<Hash>
     where P: AsRef<Path>,
           P: Clone
 {
-    futures::done(to_file_vec(graph.edges()))
-        .and_then({
-            let base_path = base_path.clone();
-            move |files| create_dir_and_write_all_files(base_path, files)
-        })
-        .and_then(move |hash_vec| create_dir_and_write_object(base_path, &hash_vec))
+    let files = to_file_vec(graph.edges())?;
+    let hash_vec = create_dir_and_write_all_files(base_path.clone(), files).await?;
+    create_dir_and_write_object(base_path, &hash_vec).await
 }
 
-fn write_graph<P>(base_path: P, graph: &DirectedGraph) -> impl Future<Item=GraphHash, Error=Error>
+async fn write_graph<P>(base_path: P, graph: &DirectedGraph) -> Result<GraphHash>
     where P: AsRef<Path>,
           P: Clone
 {
-    let vertex_fut = write_graph_vertices(base_path.clone(), graph);
-    let edge_fut = write_graph_edges(base_path, graph);
-
-    vertex_fut.join(edge_fut)
-        .map(|(vertex_vec_hash, edge_vec_hash)| GraphHash { vertex_vec_hash, edge_vec_hash })
+    Ok(GraphHash {
+        vertex_vec_hash: write_graph_vertices(base_path.clone(), graph).await?,
+        edge_vec_hash: write_graph_edges(base_path, graph).await?
+    })
 }
-
-pub fn save_graph_as<P>(base_path: P, name: String, graph: &DirectedGraph) -> impl Future<Item=(), Error=Error>
+pub async fn save_graph_as<P>(base_path: P, name: String, graph: &DirectedGraph) -> Result<()>
     where P: AsRef<Path>,
           P: Clone
 {
-    write_graph(base_path.clone(), graph)
-        .and_then(|graph_hash| TryInto::<File<GraphHash>>::try_into(&graph_hash)
-            .map_err(Into::into))
-        .and_then(move |file| {
-            tokio_fs::create_dir_all(File::<GraphHash>::create_dir(base_path.clone()))
-                .and_then(|_| write_named_file(base_path, name, file))
-                .map_err(Into::into)
-        })
+    let graph_hash = write_graph(base_path.clone(), graph).await?;
+    let file = TryInto::<File<GraphHash>>::try_into(&graph_hash)?;
+    fs::create_dir_all(File::<GraphHash>::create_dir(base_path.clone())).await?;
+    Ok(write_named_file(base_path, name, file).await?)
 }
 
-fn read_file<P, OT>(base_path: P, hash: Hash) -> impl Future<Item=File<OT>, Error=io::Error>
+async fn read_file<P, OT>(base_path: P, hash: Hash) -> Result<File<OT>>
     where OT: ObjectType,
           P: AsRef<Path>
 {
     let path: PathBuf = File::<OT>::create_path_from_hash(base_path, hash);
-    tokio_fs::read(path)
-        .map(move |content| File::<OT>::new(content, hash))
+    Ok(File::<OT>::new(fs::read(path).await?, hash))
 }
 
-fn read_named_file<P, S, NOT>(base_path: P, name: S) -> impl Future<Item=File<NOT>, Error=io::Error>
+async fn read_named_file<P, S, NOT>(base_path: P, name: S) -> Result<File<NOT>>
     where NOT: ObjectType,
           NOT: NamedObjectType,
           P: AsRef<Path>,
           S: AsRef<str>
 {
     let path: PathBuf = File::<NOT>::create_named_path(base_path, name);
-    tokio_fs::read(path)
-        .map(move |content| {
-            let hash: Hash = (&content).into();
-            File::<NOT>::new(content, hash)
-        })
+    let content = fs::read(path).await?;
+    let hash: Hash = (&content).into();
+    Ok(File::<NOT>::new(content, hash))
 }
 
-fn read_object<P, OT>(base_path: P, hash: Hash) -> impl Future<Item=OT, Error=Error>
+async fn read_object<P, OT>(base_path: P, hash: Hash) -> Result<OT>
     where OT: ObjectType,
           for<'a> &'a File<OT>: TryInto<OT, Error=bincode::Error> /* this is a "higher ranked trait bound" https://doc.rust-lang.org/nomicon/hrtb.html */,
           P: AsRef<Path>
 {
-    read_file::<P, OT>(base_path, hash)
-        .map_err(Into::into)
-        .and_then(|file| futures::done((&file).try_into()))
-        .map_err(Into::into)
+    let file:File<OT> = read_file(base_path, hash).await?;
+    Ok((&file).try_into()?)
 }
 
-fn read_named_object<P, S, NOT>(base_path: P, name: S) -> impl Future<Item=NOT, Error=Error>
+async fn read_named_object<P, S, NOT>(base_path: P, name: S) -> Result<NOT>
     where NOT: ObjectType,
           NOT: NamedObjectType,
           for<'a> &'a File<NOT>: TryInto<NOT, Error=bincode::Error> /* this is a "higher ranked trait bound" https://doc.rust-lang.org/nomicon/hrtb.html */,
           P: AsRef<Path>,
           S: AsRef<str>
 {
-    read_named_file::<P, S, NOT>(base_path, name)
-        .map_err(Into::into)
-        .and_then(|file| futures::done((&file).try_into()))
-        .map_err(Into::into)
+    let file: File<NOT> = read_named_file(base_path, name).await?;
+    Ok((&file).try_into()?)
 }
 
-fn read_edge<P>(base_path: P, hash: Hash) -> impl Future<Item=Edge, Error=Error>
+async fn read_edge<P>(base_path: P, hash: Hash) -> Result<Edge>
     where P: AsRef<Path>,
           P: Clone
 {
-    read_object::<P, HashEdge>(base_path.clone(), hash)
-        .and_then(move |HashEdge { from, to }| {
-            let from_fut = read_object::<P, VertexId>(base_path.clone(), from);
-            let to_fut = read_object::<P, VertexId>(base_path, to);
-            from_fut.join(to_fut)
-        })
-        .map(|(from, to)| Edge(from, to))
+    let HashEdge { from, to } = read_object::<P, HashEdge>(base_path.clone(), hash).await?;
+    Ok(Edge(
+        read_object::<P, VertexId>(base_path.clone(), from).await?,
+        read_object::<P, VertexId>(base_path, to).await?
+    ))
 }
 
-fn read_all_objects<P, OT>(base_path: P, hashes: Vec<Hash>) -> impl Future<Item=Vec<OT>, Error=Error>
+async fn read_all_objects<P, OT>(base_path: P, hashes: Vec<Hash>) -> Result<Vec<OT>>
     where P: AsRef<Path>,
           P: Clone,
           OT: ObjectType,
@@ -233,78 +204,74 @@ fn read_all_objects<P, OT>(base_path: P, hashes: Vec<Hash>) -> impl Future<Item=
 {
     let futs = hashes
         .into_iter()
-        .map({
-            move |hash| read_object::<P, OT>(base_path.clone(), hash)
-        });
+        .map(move |hash| read_object::<P, OT>(base_path.clone(), hash));
 
-    futures::future::join_all(futs)
+    futures::future::try_join_all(futs).await
 }
 
-fn read_all_edges<P>(base_path: P, hashes: Vec<Hash>) -> impl Future<Item=Vec<Edge>, Error=Error>
+async fn read_all_edges<P>(base_path: P, hashes: Vec<Hash>) -> Result<Vec<Edge>>
     where P: AsRef<Path>,
           P: Clone
 {
     let futs = hashes
         .into_iter()
-        .map({
-            move |hash| read_edge::<P>(base_path.clone(), hash)
-        });
+        .map(move |hash| read_edge::<P>(base_path.clone(), hash));
 
-    futures::future::join_all(futs)
+    futures::future::try_join_all(futs).await
 }
 
 /// Reads the vertices of a graph.
 ///
 /// Note that this function consumes the graph, and gives it back in the returned Future, with
 /// the vertices added.
-fn read_graph_vertices<P>(base_path: P, vertex_vec_hash: Hash, mut graph: DirectedGraph) -> impl Future<Item=DirectedGraph, Error=Error>
+async fn read_graph_vertices<P>(base_path: P, vertex_vec_hash: Hash, mut graph: DirectedGraph) -> Result<DirectedGraph>
     where P: AsRef<Path>,
           P: Clone
 {
-    read_object::<P, HashVec<VertexId>>(base_path.clone(), vertex_vec_hash)
-        .and_then(|hash_vec| read_all_objects(base_path, hash_vec.0))
-        .and_then(|vertices| {
-            for v in vertices {
-                graph.add_vertex(v);
-            }
-            Ok(graph)
-        })
+    let hash_vec: HashVec<VertexId> = read_object(base_path.clone(), vertex_vec_hash).await?;
+    let vertices = read_all_objects(base_path, hash_vec.0).await?;
+
+    for v in vertices {
+        graph.add_vertex(v);
+    }
+
+    Ok(graph)
 }
 
 /// Reads the edges of a graph.
 ///
 /// Note that this function consumes the graph, and gives it back in the returned Future, with
 /// the edges added.
-fn read_graph_edges<P>(base_path: P, edge_vec_hash: Hash, mut graph: DirectedGraph) -> impl Future<Item=DirectedGraph, Error=Error>
+async fn read_graph_edges<P>(base_path: P, edge_vec_hash: Hash, mut graph: DirectedGraph) -> Result<DirectedGraph>
     where P: AsRef<Path>,
           P: Clone
 {
-    read_object::<P, HashVec<HashEdge>>(base_path.clone(), edge_vec_hash)
-        .and_then(|hash_vec| read_all_edges(base_path, hash_vec.0))
-        .and_then(|edges| {
-            for e in edges {
-                graph.add_edge(e);
-            }
-            Ok(graph)
-        })
+    let hash_vec: HashVec<HashEdge> = read_object(base_path.clone(), edge_vec_hash).await?;
+    let edges = read_all_edges(base_path, hash_vec.0).await?;
+
+    for e in edges {
+        graph.add_edge(e);
+    }
+
+    Ok(graph)
 }
 
-fn read_graph<P>(base_path: P, graph_hash: &GraphHash) -> impl Future<Item=DirectedGraph, Error=Error>
+async fn read_graph<P>(base_path: P, graph_hash: &GraphHash) -> Result<DirectedGraph>
     where P: AsRef<Path>,
           P: Clone
 {
     let &GraphHash { vertex_vec_hash, edge_vec_hash } = graph_hash;
 
-    read_graph_vertices(base_path.clone(), vertex_vec_hash, DirectedGraph::new())
-        .and_then(move |graph| read_graph_edges(base_path, edge_vec_hash, graph))
+    let graph = read_graph_vertices(base_path.clone(), vertex_vec_hash, DirectedGraph::new()).await?;
+    read_graph_edges(base_path, edge_vec_hash, graph).await
 }
 
-pub fn load_graph<P>(base_path: P, name: String) -> impl Future<Item=DirectedGraph, Error=Error>
+pub async fn load_graph<P>(base_path: P, name: String) -> Result<DirectedGraph>
     where P: AsRef<Path>,
           P: Clone
 {
-    read_named_object::<P, String, GraphHash>(base_path.clone(), name)
-        .and_then(move |graph_hash| read_graph(base_path, &graph_hash))
+    let graph_hash = read_named_object::<P, String, GraphHash>(base_path.clone(), name).await?;
+    read_graph(base_path, &graph_hash).await
 }
 
 #[cfg(test)]
@@ -316,7 +283,6 @@ mod test {
         file::File,
     };
 
-    use futures::future::Future;
     use tokio::runtime::Runtime;
 
     use super::*;
@@ -325,114 +291,104 @@ mod test {
 
     #[test]
     fn test_write_read_vertex() -> Result<()> {
-        let base_path: PathBuf = Path::new("../target/test/store/").into();
-
-        let vertex = VertexId(27);
-
-        let f = tokio_fs::create_dir_all(File::<VertexId>::create_dir(base_path.clone()))
-            .map_err(Into::into)
-            .and_then({
-                let base_path = base_path.clone();
-                move |_| write_object(base_path, &vertex)
-            })
-            .and_then(move |hash| read_object::<PathBuf, VertexId>(base_path, hash));
-
         let mut rt = Runtime::new()?;
-        let result = rt.block_on(f)?;
+        rt.block_on(async {
+            let base_path: PathBuf = Path::new("../target/test/store/").into();
 
-        Ok(assert_eq!(vertex, result))
+            let vertex = VertexId(27);
+
+            fs::create_dir_all(File::<VertexId>::create_dir(base_path.clone())).await?;
+
+            let hash = write_object(base_path.clone(), &vertex).await?;
+
+            let result = read_object::<PathBuf, VertexId>(base_path, hash).await?;
+
+            Ok(assert_eq!(vertex, result))
+        })
     }
 
     #[test]
     fn test_write_read_edge() -> Result<()> {
-        let base_path: PathBuf = Path::new("../target/test/store/").into();
-
-        let edge = Edge(VertexId(3), VertexId(4));
-
-        let f = tokio_fs::create_dir_all(File::<VertexId>::create_dir(base_path.clone()))
-            .and_then({
-                let base_path = base_path.clone();
-                move |_| tokio_fs::create_dir_all(File::<HashEdge>::create_dir(base_path))
-            })
-            .map_err(Into::into)
-            .and_then({
-                let base_path = base_path.clone();
-                move |_| {
-                    let f_1 = write_object(base_path.clone(), &edge.0);
-                    let f_2 = write_object(base_path.clone(), &edge.1);
-                    let f_3 = write_object(base_path, &edge);
-                    f_1.join3(f_2, f_3)
-                }
-            })
-            .and_then(move |(_, _, hash)| read_edge(base_path, hash));
-
         let mut rt = Runtime::new()?;
-        let result = rt.block_on(f)?;
+        rt.block_on(async {
+            let base_path: PathBuf = Path::new("../target/test/store/").into();
+            let edge = Edge(VertexId(3), VertexId(4));
 
-        Ok(assert_eq!(edge, result))
+            fs::create_dir_all(File::<VertexId>::create_dir(base_path.clone())).await?;
+            fs::create_dir_all(File::<HashEdge>::create_dir(base_path.clone())).await?;
+
+            let f1 = write_object(base_path.clone(), &edge.0);
+            let f2 = write_object(base_path.clone(), &edge.1);
+            let f3 = write_object(base_path.clone(), &edge);
+
+            let (_, _, hash) = futures::future::try_join3(f1, f2, f3).await?;
+
+            let result = read_edge(base_path, hash).await?;
+
+            Ok(assert_eq!(edge, result))
+        })
     }
 
     #[test]
     fn test_write_read_graph_vertices() -> Result<()> {
-        let base_path: PathBuf = Path::new("../target/test/store/").into();
-
-        let graph = {
-            let mut graph = DirectedGraph::new();
-            graph.add_vertex(VertexId(14));
-            graph.add_vertex(VertexId(17));
-            graph
-        };
-
-        let f = write_graph_vertices(base_path.clone(), &graph)
-            .and_then(move |hash| {
-                let graph = DirectedGraph::new();
-                read_graph_vertices(base_path, hash, graph)
-            });
-
         let mut rt = Runtime::new()?;
-        let result = rt.block_on(f)?;
+        rt.block_on(async {
+            let base_path: PathBuf = Path::new("../target/test/store/").into();
 
-        Ok(assert_eq!(graph, result))
+            let graph = {
+                let mut graph = DirectedGraph::new();
+                graph.add_vertex(VertexId(14));
+                graph.add_vertex(VertexId(17));
+                graph
+            };
+
+            let hash = write_graph_vertices(base_path.clone(), &graph).await?;
+
+            let result = read_graph_vertices(base_path, hash, DirectedGraph::new()).await?;
+
+            Ok(assert_eq!(graph, result))
+        })
     }
 
     #[test]
     fn test_write_read_graph() -> Result<()> {
-        let base_path: PathBuf = Path::new("../target/test/store/").into();
-
-        let graph = {
-            let mut graph = DirectedGraph::new();
-            graph.add_vertex(VertexId(14));
-            graph.add_edge(Edge(VertexId(14), VertexId(15)));
-            graph
-        };
-
-        let f = write_graph(base_path.clone(), &graph)
-            .and_then(move |grap_hash| read_graph(base_path, &grap_hash));
-
         let mut rt = Runtime::new()?;
-        let result = rt.block_on(f)?;
+        rt.block_on(async {
+            let base_path: PathBuf = Path::new("../target/test/store/").into();
 
-        Ok(assert_eq!(graph, result))
+            let graph = {
+                let mut graph = DirectedGraph::new();
+                graph.add_vertex(VertexId(14));
+                graph.add_edge(Edge(VertexId(14), VertexId(15)));
+                graph
+            };
+
+            let hash = write_graph(base_path.clone(), &graph).await?;
+            let result = read_graph(base_path, &hash).await?;
+
+            Ok(assert_eq!(graph, result))
+        })
     }
 
     #[test]
     fn test_save_as_and_load_graph() -> Result<()> {
-        let base_path: PathBuf = Path::new("../target/test/store/").into();
-        let name = "graph_pepi".to_string();
-
-        let graph = {
-            let mut graph = DirectedGraph::new();
-            graph.add_vertex(VertexId(14));
-            graph.add_edge(Edge(VertexId(14), VertexId(15)));
-            graph
-        };
-
-        let f = save_graph_as(base_path.clone(), name.clone(), &graph)
-            .and_then(move |_| load_graph(base_path, name));
-
         let mut rt = Runtime::new()?;
-        let result = rt.block_on(f)?;
+        rt.block_on(async {
+            let base_path: PathBuf = Path::new("../target/test/store/").into();
+            let name = "graph_pepi".to_string();
 
-        Ok(assert_eq!(graph, result))
+            let graph = {
+                let mut graph = DirectedGraph::new();
+                graph.add_vertex(VertexId(19));
+                graph.add_edge(Edge(VertexId(12), VertexId(19)));
+                graph
+            };
+
+            save_graph_as(base_path.clone(), name.clone(), &graph).await?;
+            let result = load_graph(base_path, name).await?;
+
+            Ok(assert_eq!(graph, result))
+        })
     }
+
 }

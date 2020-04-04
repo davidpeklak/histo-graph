@@ -5,4 +5,4 @@ authors = ["cacr <christheblog@gmail.com>", "David Peklak <dpeklak@gmail.com>"]
 edition = "2018"
 
 [dev-dependencies]
-rand = "0.5"
+rand = "0.7"

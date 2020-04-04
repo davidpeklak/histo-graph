@@ -221,7 +221,7 @@ mod test {
         // duplicate edges.
         let mut edges: Vec<Edge> = vec![];
         for _ in 0..30 {
-            edges.push(Edge(VertexId(rng.gen_range::<u64>(0, 3)), VertexId(rng.gen_range::<u64>(0, 3))))
+            edges.push(Edge(VertexId(rng.gen_range(0u64, 3u64)), VertexId(rng.gen_range(0u64, 3u64))))
         }
 
         let mut btb: BTreeBag<Edge> = BTreeBag::new();

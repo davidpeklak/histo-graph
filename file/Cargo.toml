@@ -6,12 +6,10 @@ edition = "2018"
 
 [dependencies]
 histo-graph-core = { path = "../core" }
-bincode = "1.1.4"
-ring = "0.14.6"
-data-encoding = "2.1.2"
-tokio-fs = "0.1.6"
-futures = "0.1.28"
-serde = { version = "1.0.92", features = ["derive"] }
+bincode = "1.2"
+ring = "0.16"
+data-encoding = "2.2"
+tokio = { version = "0.2", features = ["fs"] }
+futures = "0.3"
+serde = { version = "1.0", features = ["derive"] }
 
-[dev-dependencies]
-tokio = "0.1.21"
