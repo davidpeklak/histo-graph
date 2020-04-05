@@ -178,7 +178,7 @@ impl DirectedGraph {
         self.edge_map.iter()
             .map(|(vertex_id, bag)| {
                 bag.iter()
-                    .filter(move |Edge(from, to)| *vertex_id == *from)
+                    .filter(move |Edge(from, _)| *vertex_id == *from)
             })
             .flatten()
     }

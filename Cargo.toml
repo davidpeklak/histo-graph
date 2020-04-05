@@ -3,5 +3,6 @@ members = [
     "core",
     "serde",
     "file",
-    "refajo"
+    "refajo",
+    "http"
 ]

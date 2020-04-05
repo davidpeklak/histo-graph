@@ -8,7 +8,7 @@ edition = "2018"
 histo-graph-core = { path = "../core" }
 histo-graph-file = { path = "../file" }
 histo-graph-serde = { path = "../serde" }
-serde_json = "1.0.39"
+serde_json = "1.0"
 clap = "2.33.0"
 tokio = { version = "0.2", features = ["fs"] }
 futures = "0.3"
