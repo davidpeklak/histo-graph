@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <title>Tutorial Demo</title>
+</head>
+<body>
+<div id="mountNode"></div>
+<!-- import G6 by CDN -->
+<script src="https://gw.alipayobjects.com/os/antv/pkg/_antv.g6-3.3.1/dist/g6.min.js"></script>
+
+<script>
+    // console.log(G6.Global.version);
+    const initData = {"nodes":[{"id":"45","label":"45"},{"id":"17","label":"17"},{"id":"2","label":"2"},{"id":"18","label":"18"},{"id":"4","label":"4"},{"id":"1","label":"1"},{"id":"6","label":"6"}],"edges":[{"source":"17","target":"18","label":"edge"},{"source":"4","target":"6","label":"edge"},{"source":"1","target":"2","label":"edge"}]};
+    const graph = new G6.Graph({
+        container: 'mountNode', // String | HTMLElement, required, the id of DOM element or an HTML node
+        width: 500, // Number, required, the width of the graph
+        height: 400, // Number, required, the height of the graph
+    });
+
+    const main = async () => {
+        const response = await fetch(
+            '/g6',);
+        //console.log(await response.type);
+        const data = await response.json();
+
+        graph.data(data); // Load the remote data
+        graph.render(); // Render the graph
+    };
+    main();
+
+</script>
+
+
+</body>
+</html>

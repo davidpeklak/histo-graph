@@ -2,15 +2,28 @@ use warp::Filter;
 use histo_graph_file::file_storage::*;
 use std::path::{PathBuf, Path};
 use histo_graph_serde::directed_graph_serde::DirectedGraphSer;
+use g6_serde::DirectedGraphG6;
 use histo_graph_core::graph::graph::{VertexId, Edge};
+
+mod g6_serde;
 
 #[tokio::main]
 async fn main() {
     // get, /show
     let show =
         warp::get()
-            .and(warp::path("show"))
+            .and(warp::path::end())
             .and_then(fn_show);
+
+    // get, index.html
+    let index = warp::get()
+        .and(warp::path("index.html"))
+        .and(warp::fs::file("./http/resources/index.html"));
+
+    // get, /g6
+    let get_g6 =
+        warp::get()
+            .and_then(fn_get_g6);
 
     // post, /add-vertex/:vertex_id
     let add_vertex =
@@ -29,6 +42,8 @@ async fn main() {
 
     let all =
         show
+            .or(index)
+            .or(get_g6)
             .or(add_vertex)
             .or(add_edge);
 
@@ -41,6 +56,15 @@ async fn fn_show() -> Result<impl warp::Reply, std::convert::Infallible> {
 
     let graph = load_graph(base_dir, name).await.unwrap();
     let ser: DirectedGraphSer = (&graph).into();
+    Ok(warp::reply::json(&ser))
+}
+
+async fn fn_get_g6() -> Result<impl warp::Reply, std::convert::Infallible> {
+    let base_dir: PathBuf = Path::new(".store/").into();
+    let name = "current".to_string();
+
+    let graph = load_graph(base_dir, name).await.unwrap();
+    let ser: DirectedGraphG6 = (&graph).into();
     Ok(warp::reply::json(&ser))
 }
 
