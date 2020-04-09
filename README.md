@@ -30,6 +30,9 @@ Running sub-command 'show'
 ### [refajo](refajo/)
 A command-line-tool to manipulate a stored graph.
 
+### [histo-graph-http](http/)
+An http server to show and manipulate a stored graph.
+
 ### [histo-graph-core](core/)
 Holds the core data-structures for commands and graphs.
 

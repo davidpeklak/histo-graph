@@ -12,17 +12,19 @@ async fn main() {
     // get, /show
     let show =
         warp::get()
-            .and(warp::path::end())
+            .and(warp::path("show"))
             .and_then(fn_show);
 
-    // get, index.html
-    let index = warp::get()
-        .and(warp::path("index.html"))
-        .and(warp::fs::file("./http/resources/index.html"));
+    // get, /
+    let index =
+        warp::get()
+            .and(warp::path::end())
+            .and(warp::fs::file("./resources/index.html"));
 
     // get, /g6
     let get_g6 =
         warp::get()
+            .and(warp::path("g6"))
             .and_then(fn_get_g6);
 
     // post, /add-vertex/:vertex_id
